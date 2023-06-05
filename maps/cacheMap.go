@@ -90,7 +90,7 @@ func (s *CacheMap[K, V]) Store(key K, value V) (cleared []K) {
 	return cleared
 }
 
-func (s *CacheMap[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool) {
+func (s *CacheMap[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool, cleared []K) {
 	if s.Concurrent {
 		s.rLock.Lock()
 		defer s.rLock.Unlock()
@@ -103,11 +103,14 @@ func (s *CacheMap[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool) {
 		}
 		x = newTimeData(value)
 		s.m[key] = x
+		if len(s.m) > s.SizeThreshold {
+			cleared = s.clear()
+		}
 	} else {
 		x.tsNano = nowNano()
 	}
 	actual = x.data
-	return actual, loaded
+	return actual, loaded, cleared
 }
 
 func (s *CacheMap[K, V]) LoadAndDelete(key K) (value V, loaded bool) {
