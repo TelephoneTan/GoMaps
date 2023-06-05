@@ -65,18 +65,19 @@ func (s *CacheMap[K, V]) Load(key K) (value V, ok bool) {
 	return value, ok
 }
 
-func (s *CacheMap[K, V]) clear() (cleared []K) {
+func (s *CacheMap[K, V]) clear() (cleared []*K) {
 	n := nowNano()
 	for k, v := range s.m {
 		if n-v.tsNano > s.TTL.Nanoseconds() {
 			delete(s.m, k)
-			cleared = append(cleared, k)
+			kk := k
+			cleared = append(cleared, &kk)
 		}
 	}
 	return cleared
 }
 
-func (s *CacheMap[K, V]) Store(key K, value V) (cleared []K) {
+func (s *CacheMap[K, V]) Store(key K, value V) (cleared []*K) {
 	if s.Concurrent {
 		s.rLock.Lock()
 		defer s.rLock.Unlock()
@@ -90,7 +91,7 @@ func (s *CacheMap[K, V]) Store(key K, value V) (cleared []K) {
 	return cleared
 }
 
-func (s *CacheMap[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool, cleared []K) {
+func (s *CacheMap[K, V]) LoadOrStore(key K, value V) (actual V, loaded bool, cleared []*K) {
 	if s.Concurrent {
 		s.rLock.Lock()
 		defer s.rLock.Unlock()
