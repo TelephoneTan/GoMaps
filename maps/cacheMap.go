@@ -46,8 +46,9 @@ func NewCacheMap[K comparable, V any](concurrent bool, sizeThreshold int, ttl ti
 	}
 	m.m = make(map[K]timeData[V])
 	if m.Concurrent {
-		m.rLock = new(sync.RWMutex).RLocker()
-		m.wLock = new(sync.Mutex)
+		rw := new(sync.RWMutex)
+		m.rLock = rw.RLocker()
+		m.wLock = rw
 	}
 	return m
 }
@@ -59,8 +60,24 @@ func (s *CacheMap[K, V]) Load(key *K) (value V, ok bool) {
 	}
 	x, ok := s.m[*key]
 	if ok {
-		value = x.data
-		x.tsNano = nowNano()
+		if s.Concurrent {
+			s.rLock.Unlock()
+		}
+		func() {
+			if s.Concurrent {
+				s.wLock.Lock()
+				defer s.wLock.Unlock()
+			}
+			x, ok = s.m[*key]
+			if !ok {
+				return
+			}
+			x.tsNano = nowNano()
+			value = x.data
+		}()
+		if s.Concurrent {
+			s.rLock.Lock()
+		}
 	}
 	return value, ok
 }
@@ -79,8 +96,6 @@ func (s *CacheMap[K, V]) clear() (cleared []*K) {
 
 func (s *CacheMap[K, V]) Store(key *K, value V) (cleared []*K) {
 	if s.Concurrent {
-		s.rLock.Lock()
-		defer s.rLock.Unlock()
 		s.wLock.Lock()
 		defer s.wLock.Unlock()
 	}
@@ -93,15 +108,11 @@ func (s *CacheMap[K, V]) Store(key *K, value V) (cleared []*K) {
 
 func (s *CacheMap[K, V]) LoadOrStore(key *K, value V) (actual V, loaded bool, cleared []*K) {
 	if s.Concurrent {
-		s.rLock.Lock()
-		defer s.rLock.Unlock()
+		s.wLock.Lock()
+		defer s.wLock.Unlock()
 	}
 	x, loaded := s.m[*key]
 	if !loaded {
-		if s.Concurrent {
-			s.wLock.Lock()
-			defer s.wLock.Unlock()
-		}
 		x = newTimeData(value)
 		s.m[*key] = x
 		if len(s.m) > s.SizeThreshold {
@@ -118,13 +129,27 @@ func (s *CacheMap[K, V]) LoadAndDelete(key *K) (value V, loaded bool) {
 	if s.Concurrent {
 		s.rLock.Lock()
 		defer s.rLock.Unlock()
-		s.wLock.Lock()
-		defer s.wLock.Unlock()
 	}
 	x, loaded := s.m[*key]
 	if loaded {
-		value = x.data
-		delete(s.m, *key)
+		if s.Concurrent {
+			s.rLock.Unlock()
+		}
+		func() {
+			if s.Concurrent {
+				s.wLock.Lock()
+				defer s.wLock.Unlock()
+			}
+			x, loaded = s.m[*key]
+			if !loaded {
+				return
+			}
+			delete(s.m, *key)
+			value = x.data
+		}()
+		if s.Concurrent {
+			s.rLock.Lock()
+		}
 	}
 	return value, loaded
 }
@@ -133,15 +158,36 @@ func (s *CacheMap[K, V]) Delete(key *K) {
 	if s.Concurrent {
 		s.rLock.Lock()
 		defer s.rLock.Unlock()
-		s.wLock.Lock()
-		defer s.wLock.Unlock()
 	}
-	delete(s.m, *key)
+	_, loaded := s.m[*key]
+	if loaded {
+		if s.Concurrent {
+			s.rLock.Unlock()
+		}
+		func() {
+			if s.Concurrent {
+				s.wLock.Lock()
+				defer s.wLock.Unlock()
+			}
+			_, loaded = s.m[*key]
+			if !loaded {
+				return
+			}
+			delete(s.m, *key)
+		}()
+		if s.Concurrent {
+			s.rLock.Lock()
+		}
+	}
 }
 
 func (s *CacheMap[K, V]) Range(f func(key *K, value V) bool) {
 	if f == nil {
 		return
+	}
+	if s.Concurrent {
+		s.rLock.Lock()
+		defer s.rLock.Unlock()
 	}
 	for k, v := range s.m {
 		kk := k
